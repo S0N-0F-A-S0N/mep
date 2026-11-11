@@ -172,34 +172,29 @@ BitSet.prototype.previousSetBit = function (fromIndex) {
 
     const index = min2(fromIndex, this.__length - 1);
 
-    let byteIndex = index >> 3;
+    let byteIndex = Math.floor(index / 8);
     let bitIndex = index % 8;
 
     const data = this.__data;
 
     let byte = data[byteIndex];
 
-    //handle first byte separately due to potential partial traversal
     for (; bitIndex >= 0; bitIndex--) {
         if ((byte & MaskSet[bitIndex]) !== 0) {
             return byteIndex * 8 + bitIndex;
         }
     }
 
-    //unwind first byte
     byteIndex--;
 
-    //scan the rest
     for (; byteIndex >= 0; byteIndex--) {
-
         byte = data[byteIndex];
-
-        for (bitIndex = 7; bitIndex >= 0; bitIndex--) {
-
-            if ((byte & MaskSet[bitIndex]) !== 0) {
-                return byteIndex * 8 + bitIndex;
+        if (byte !== 0) {
+            for (bitIndex = 7; bitIndex >= 0; bitIndex--) {
+                if ((byte & MaskSet[bitIndex]) !== 0) {
+                    return byteIndex * 8 + bitIndex;
+                }
             }
-
         }
     }
 
@@ -215,52 +210,37 @@ BitSet.prototype.nextSetBit = function (fromIndex) {
     assert.ok(fromIndex >= 0, `fromIndex must be greater or equal to 0, instead was ${fromIndex}`);
     assert.ok(Number.isInteger(fromIndex), `fromIndex must be an integer, instead was ${fromIndex}`);
 
-    /*
-    TODO consider bithacks: https://stackoverflow.com/questions/21623614/finding-the-first-set-bit-in-a-binary-number
-    http://graphics.stanford.edu/~seander/bithacks.html
-     */
-
     const bitLength = this.__length;
     if (fromIndex >= bitLength) {
-        //index is out of bounds, return -1
         return -1;
     }
 
-    let byteIndex = fromIndex >> 3;
+    let byteIndex = Math.floor(fromIndex / 8);
     let bitIndex = fromIndex % 8;
 
     const data = this.__data;
 
     let byte = data[byteIndex];
-    let bitAddress;
 
-
-    //handle first byte separately due to potential partial traversal
     for (; bitIndex < 8; bitIndex++) {
         if ((byte & MaskSet[bitIndex]) !== 0) {
-            bitAddress = byteIndex * 8 + bitIndex;
-
-            return bitAddress;
+            return byteIndex * 8 + bitIndex;
         }
     }
 
-    //unwind first byte
     byteIndex++;
 
-    //scan the rest
-    const byteLength = bitLength / 8;
+    const byteLength = Math.ceil(bitLength / 8);
     for (; byteIndex < byteLength; byteIndex++) {
         byte = data[byteIndex];
-
-        for (bitIndex = 0; bitIndex < 8; bitIndex++) {
-            if ((byte & MaskSet[bitIndex]) !== 0) {
-                bitAddress = byteIndex * 8 + bitIndex;
-
-                return bitAddress;
+        if (byte !== 0) {
+            for (bitIndex = 0; bitIndex < 8; bitIndex++) {
+                if ((byte & MaskSet[bitIndex]) !== 0) {
+                    return byteIndex * 8 + bitIndex;
+                }
             }
         }
     }
-
 
     return -1;
 };
@@ -278,45 +258,43 @@ BitSet.prototype.nextClearBit = function (fromIndex) {
         return this.__firstClearBitIndex;
     }
 
-    let byteIndex = fromIndex >> 3;
+    let byteIndex = Math.floor(fromIndex / 8);
     let bitIndex = fromIndex % 8;
 
     let byte = this.__data[byteIndex];
     let bitAddress;
 
-
-    //handle first byte separately due to potential partial traversal
     for (; bitIndex < 8; bitIndex++) {
         if ((byte & MaskSet[bitIndex]) === 0) {
             bitAddress = byteIndex * 8 + bitIndex;
-
             if (this.__firstClearBitIndex === -1) {
                 this.__firstClearBitIndex = bitAddress;
             }
-
             return bitAddress;
         }
     }
 
-    //unwind first byte
     byteIndex++;
 
-    //scan the rest
-    for (; byteIndex < this.__length; byteIndex++) {
+    const byteLength = Math.ceil(this.__length / 8);
+    for (; byteIndex < byteLength; byteIndex++) {
         byte = this.__data[byteIndex];
-        for (bitIndex = 0; bitIndex < 8; bitIndex++) {
-            if ((byte & MaskSet[bitIndex]) === 0) {
-                bitAddress = byteIndex * 8 + bitIndex;
-
-                if (this.__firstClearBitIndex === -1) {
-                    this.__firstClearBitIndex = bitAddress;
+        if (byte !== 255) {
+            for (bitIndex = 0; bitIndex < 8; bitIndex++) {
+                if ((byte & MaskSet[bitIndex]) === 0) {
+                    bitAddress = byteIndex * 8 + bitIndex;
+                    if (this.__firstClearBitIndex === -1) {
+                        this.__firstClearBitIndex = bitAddress;
+                    }
+                    return bitAddress;
                 }
-
-                return bitAddress;
             }
         }
     }
 
+    // Check beyond __length in the partial last byte if it doesn't align to 8
+    // Actually the previous version checked up to this.__length byteIndex which meant reading out of bounds.
+    // However, if we reached the end of the populated bitset and all bits were 1, the next clear bit is this.__length.
     if (this.__firstClearBitIndex === -1) {
         this.__firstClearBitIndex = this.__length;
     }
@@ -407,12 +385,40 @@ BitSet.prototype.clear = function (bitIndex) {
  * @param {number} endIndex last bit to be cleared
  */
 BitSet.prototype.clearRange = function (startIndex, endIndex) {
-    //TODO this can be done more efficiently
-    for (let i = startIndex; i <= endIndex; i++) {
-        this.set(i, false);
+    if (startIndex > endIndex) {
+        return;
+    }
+
+    const startByte = Math.floor(startIndex / 8);
+    const endByte = Math.floor(endIndex / 8);
+
+    if (startByte === endByte) {
+        let mask = 0;
+        for (let i = startIndex % 8; i <= endIndex % 8; i++) mask |= MaskSet[i];
+        this.__data[startByte] &= ~mask;
+    } else {
+        let mask = 0;
+        for (let i = startIndex % 8; i < 8; i++) mask |= MaskSet[i];
+        this.__data[startByte] &= ~mask;
+
+        if (endByte > startByte + 1) {
+            this.__data.fill(0, startByte + 1, endByte);
+        }
+
+        mask = 0;
+        for (let i = 0; i <= endIndex % 8; i++) mask |= MaskSet[i];
+        this.__data[endByte] &= ~mask;
+    }
+
+    if (endIndex >= this.__length - 1 && startIndex <= this.__length - 1) {
+        const newLastSetBit = this.previousSetBit(endIndex);
+        this.__setLength(newLastSetBit + 1);
+    }
+
+    if (this.__firstClearBitIndex === -1 || startIndex < this.__firstClearBitIndex) {
+        this.__firstClearBitIndex = startIndex;
     }
 };
-
 
 /**
  *

@@ -1,0 +1,3 @@
+## 2026-11-11 - [BitSet nextClearBit/nextSetBit/previousSetBit Optimization]
+**Learning:** Bit operations on TypedArrays that inspect bit-by-bit are much slower than checking if the whole byte is `0` or `255` (all clear or all set). By fast-forwarding through matching bytes and only descending to bit-level when a byte has a mixed state, `BitSet.js` methods were sped up significantly (~10x on large sets). `clearRange` was also O(N) bits, replaced with `TypedArray.fill` for the inner bytes making it vastly faster.
+**Action:** When working with binary masks in JS typed arrays, always chunk by byte or dword to skip empty/full segments before doing bit-level iterations.
